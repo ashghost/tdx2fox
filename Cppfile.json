@@ -1,0 +1,20 @@
+{
+  "type": "project",
+  "name": "TDX2FOX",
+  "files": [
+    "./src/*.cpp"
+  ],
+  "runtimeLib": "static",
+  "arch": "x86",
+  "cl": {
+    "macro": [
+      "UNICODE"
+    ],
+    "link": [
+      "DEF:src/export.def"
+    ],
+    "compile": [
+      "wd4201"
+    ]
+  }
+}
