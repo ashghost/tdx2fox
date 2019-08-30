@@ -174,7 +174,6 @@ static int tdxdll_function_entry(int dll_no, CALCINFO *pData)
 #define DEFINE_TDXDLL_FUNCTION_ENTRY(dll_no)                                              \
   extern "C" int WINAPI TDXDLL##dll_no(CALCINFO *pData)                                   \
   {                                                                                       \
-    assert(sizeof(CALCINFO) == pData->m_dwSize);                                          \
     static_assert(dll_no > 0 && dll_no <= TdxDllLoader::DLL_COUNT,                        \
                   "dll_no [" #dll_no "] overflow, must in [1, TdxDllLoader::DLL_COUNT]"); \
     return tdxdll_function_entry(dll_no - 1, pData);                                      \
@@ -208,7 +207,7 @@ BOOL APIENTRY DllMain(HANDLE hModule,
     TdxDllLoader::copy_dll = ::GetPrivateProfileInt(TEXT("TDX2FOX"),
                                                     TEXT("DLL_THREAD_SAFE"),
                                                     0,
-                                                    dll_ini_path.c_str());
+                                                    dll_ini_path.c_str())? true: false;
     for (size_t i = 0; i < TdxDllLoader::DLL_COUNT; ++i)
     {
       TCHAR tdx_dll_path[MAX_PATH] = {0};
