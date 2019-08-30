@@ -30,18 +30,13 @@ struct TdxDll
   TdxDll(HMODULE handle, const TCHAR *path)
       : dll(handle), lib_path(path)
   {
-    if (dll)
-    {
-      init_functions();
-    }
+    assert(handle);
+    init_functions();
   }
 
   ~TdxDll()
   {
-    if (dll)
-    {
-      ::FreeLibrary(dll);
-    }
+    ::FreeLibrary(dll);
   }
 
   TdxDll(const TdxDll &) = delete;
@@ -129,7 +124,10 @@ struct TdxDllLoader
       if (!dll_path[i].empty())
       {
         HMODULE handle = LoadLibrarySP(dll_path[i].c_str());
-        dlls[i] = std::make_shared<TdxDll>(handle, dll_path[i].c_str());
+        if (handle)
+        {
+          dlls[i] = std::make_shared<TdxDll>(handle, dll_path[i].c_str());
+        }
       }
     }
   }
@@ -140,7 +138,7 @@ struct TdxDllLoader
 std::array<string, TdxDllLoader::DLL_COUNT> TdxDllLoader::dll_path;
 bool TdxDllLoader::copy_dll = false;
 
-static const TCHAR *const bands[] = {
+static const TCHAR *const KEY_BANDS[] = {
     TEXT("band1"),
     TEXT("band2"),
     TEXT("band3"),
@@ -152,7 +150,7 @@ static const TCHAR *const bands[] = {
     TEXT("band9"),
     TEXT("band10"),
 };
-static_assert(std::size(bands) == TdxDllLoader::DLL_COUNT, "size(bands) must equal DLL_COUNT");
+static_assert(std::size(KEY_BANDS) == TdxDllLoader::DLL_COUNT, "size(KEY_BANDS) must equal DLL_COUNT");
 
 static int tdxdll_function_entry(int dll_no, CALCINFO *pData)
 {
@@ -207,15 +205,20 @@ BOOL APIENTRY DllMain(HANDLE hModule,
     path.resize(MAX_PATH);
     ::GetModuleFileName((HMODULE)hModule, &path[0], path.size());
     string dll_ini_path = path.substr(0, path.find_last_of('\\')) + TEXT("\\dlls.ini");
-    TCHAR tdx_dll_path[MAX_PATH];
-    int dll_thread_safe = ::GetPrivateProfileInt(TEXT("TDX2FOX"), TEXT("DLL_THREAD_SAFE"), 0, dll_ini_path.c_str());
-    TdxDllLoader::copy_dll = dll_thread_safe? true: false;
+    TdxDllLoader::copy_dll = ::GetPrivateProfileInt(TEXT("TDX2FOX"),
+                                                    TEXT("DLL_THREAD_SAFE"),
+                                                    0,
+                                                    dll_ini_path.c_str());
     for (size_t i = 0; i < TdxDllLoader::DLL_COUNT; ++i)
     {
-      if (::GetPrivateProfileString(TEXT("BAND"), bands[i], TEXT(""), tdx_dll_path, std::size(tdx_dll_path), dll_ini_path.c_str()))
-      {
-        TdxDllLoader::dll_path[i] = tdx_dll_path;
-      }
+      TCHAR tdx_dll_path[MAX_PATH] = {0};
+      ::GetPrivateProfileString(TEXT("BAND"),
+                                KEY_BANDS[i],
+                                TEXT(""),
+                                tdx_dll_path,
+                                std::size(tdx_dll_path),
+                                dll_ini_path.c_str());
+      TdxDllLoader::dll_path[i] = tdx_dll_path;
     }
   }
   break;
