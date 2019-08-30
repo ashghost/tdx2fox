@@ -7,23 +7,33 @@
 #include <string>
 #include <array>
 #include <cassert>
+#include <atomic>
 
 #ifdef UNICODE
 using string = std::wstring;
+template <typename... Args>
+auto to_string(Args &&... args)
+{
+  return std::to_wstring(std::forward<Args>(args)...);
+}
 #else
 using string = std::string;
+template <typename... Args>
+auto to_string(Args &&... args)
+{
+  return std::to_string(std::forward<Args>(args)...);
+}
 #endif
 
 struct TdxDll
 {
-  TdxDll(const TCHAR *path)
-      : dll(::LoadLibrary(path)), lib_path(path)
+  TdxDll(HMODULE handle, const TCHAR *path)
+      : dll(handle), lib_path(path)
   {
-    if (!dll)
+    if (dll)
     {
-      return;
+      init_functions();
     }
-    init_functions();
   }
 
   ~TdxDll()
@@ -33,6 +43,9 @@ struct TdxDll
       ::FreeLibrary(dll);
     }
   }
+
+  TdxDll(const TdxDll &) = delete;
+  TdxDll &operator=(const TdxDll &) = delete;
 
   bool init_functions()
   {
@@ -84,7 +97,49 @@ struct FoxCalcParamValueTransform
 
 using ConstTdxDllPtr = std::shared_ptr<const TdxDll>;
 
-static std::array<ConstTdxDllPtr, 10> dlls;
+struct TdxDllLoader
+{
+  static constexpr size_t DLL_COUNT = 10;
+  static bool copy_dll;
+  static std::array<string, DLL_COUNT> dll_path;
+
+  static HMODULE LoadLibrarySP(const TCHAR *path)
+  {
+    if (!copy_dll)
+    {
+      return ::LoadLibrary(path);
+    }
+    static std::atomic_uint_fast32_t seq = 0;
+    uint32_t id = seq++;
+    string tmpdir(MAX_PATH, 0);
+    auto length = ::GetTempPath(std::size(tmpdir), &tmpdir[0]);
+    tmpdir.resize(length);
+    tmpdir += TEXT("TDX2FOX-DLL-COPY-") + to_string(id) + TEXT(".dll");
+    if (::CopyFile(path, tmpdir.c_str(), FALSE))
+    {
+      return ::LoadLibrary(tmpdir.c_str());
+    }
+    return NULL;
+  }
+
+  TdxDllLoader()
+  {
+    for (size_t i = 0; i < dlls.size(); i++)
+    {
+      if (!dll_path[i].empty())
+      {
+        HMODULE handle = LoadLibrarySP(dll_path[i].c_str());
+        dlls[i] = std::make_shared<TdxDll>(handle, dll_path[i].c_str());
+      }
+    }
+  }
+
+  std::array<ConstTdxDllPtr, DLL_COUNT> dlls;
+};
+
+std::array<string, TdxDllLoader::DLL_COUNT> TdxDllLoader::dll_path;
+bool TdxDllLoader::copy_dll = false;
+
 static const TCHAR *const bands[] = {
     TEXT("band1"),
     TEXT("band2"),
@@ -97,11 +152,12 @@ static const TCHAR *const bands[] = {
     TEXT("band9"),
     TEXT("band10"),
 };
-static_assert(std::size(bands) == std::size(dlls), "size(dlls) must equal size(bands)");
+static_assert(std::size(bands) == TdxDllLoader::DLL_COUNT, "size(bands) must equal DLL_COUNT");
 
 static int tdxdll_function_entry(int dll_no, CALCINFO *pData)
 {
-  const auto &dll = dlls[dll_no];
+  static thread_local TdxDllLoader loader;
+  const auto &dll = loader.dlls[dll_no];
   if (dll && pData->m_nNumParam == 4 && pData->m_pCalcParam[0].m_nParamStart < 0)
   {
     int function_id = static_cast<int>(pData->m_pCalcParam[0].m_fParam);
@@ -117,12 +173,13 @@ static int tdxdll_function_entry(int dll_no, CALCINFO *pData)
   return -1;
 }
 
-#define DEFINE_TDXDLL_FUNCTION_ENTRY(dll_no)                                                                       \
-  extern "C" int WINAPI TDXDLL##dll_no(CALCINFO *pData)                                                            \
-  {                                                                                                                \
-    assert(sizeof(CALCINFO) == pData->m_dwSize);                                                                   \
-    static_assert(dll_no > 0 && dll_no <= dlls.size(), "dll_no [" #dll_no "] overflow, must in [1, dlls.size()]"); \
-    return tdxdll_function_entry(dll_no - 1, pData);                                                               \
+#define DEFINE_TDXDLL_FUNCTION_ENTRY(dll_no)                                              \
+  extern "C" int WINAPI TDXDLL##dll_no(CALCINFO *pData)                                   \
+  {                                                                                       \
+    assert(sizeof(CALCINFO) == pData->m_dwSize);                                          \
+    static_assert(dll_no > 0 && dll_no <= TdxDllLoader::DLL_COUNT,                        \
+                  "dll_no [" #dll_no "] overflow, must in [1, TdxDllLoader::DLL_COUNT]"); \
+    return tdxdll_function_entry(dll_no - 1, pData);                                      \
   }
 
 DEFINE_TDXDLL_FUNCTION_ENTRY(1);
@@ -151,11 +208,13 @@ BOOL APIENTRY DllMain(HANDLE hModule,
     ::GetModuleFileName((HMODULE)hModule, &path[0], path.size());
     string dll_ini_path = path.substr(0, path.find_last_of('\\')) + TEXT("\\dlls.ini");
     TCHAR tdx_dll_path[MAX_PATH];
-    for (size_t i = 0; i < dlls.size(); ++i)
+    int dll_thread_safe = ::GetPrivateProfileInt(TEXT("TDX2FOX"), TEXT("DLL_THREAD_SAFE"), 0, dll_ini_path.c_str());
+    TdxDllLoader::copy_dll = dll_thread_safe? true: false;
+    for (size_t i = 0; i < TdxDllLoader::DLL_COUNT; ++i)
     {
       if (::GetPrivateProfileString(TEXT("BAND"), bands[i], TEXT(""), tdx_dll_path, std::size(tdx_dll_path), dll_ini_path.c_str()))
       {
-        dlls[i] = ConstTdxDllPtr(new TdxDll(tdx_dll_path));
+        TdxDllLoader::dll_path[i] = tdx_dll_path;
       }
     }
   }
