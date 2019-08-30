@@ -97,6 +97,9 @@ band7=
 band8=
 band9=
 band10=
+
+[TDX2FOX]
+DLL_THREAD_SAFE=0
 ```
 
 * 通达信代码
@@ -126,5 +129,5 @@ A:"TDX2FOX@TDXDLL3"(1, H, L, C);
 
   飞狐
   ```
-  A:"TDX2FOX@PERIOD()";
+  A:"TDX2FOX@PERIOD"();
   ```
